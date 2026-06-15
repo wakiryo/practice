@@ -1,0 +1,30 @@
+namespace :mails_logs do
+  desc "send_at 2025/3/31以前のmails_contentsに紐づくmails_logsを削除"
+  task delete_old_records: :environment do
+    chunk_size = 1_000
+    sleep_sec  = 0.1
+    border     = Time.zone.local(2025, 4, 1).beginning_of_day
+    logger = Logger.new($stdout)
+    logger.formatter = proc { |_, _, _, msg| "#{Time.current.strftime('%H:%M:%S')} #{msg}\n" }
+    total_deleted = 0
+    loop_count    = 0
+    loop do
+      # mails_contentsとjoinしてsend_atで絞り込み
+      ids = Mails::Log
+              .joins(:mails_content)
+              .where("mails_contents.send_at < ?", border)
+              .limit(chunk_size)
+              .pluck("mails_logs.id")
+      break if ids.empty?
+      Mails::Block.where(mails_log_id: ids).delete_all
+      Mails::Bounce.where(mails_log_id: ids).delete_all
+      Mails::InvalidEmail.where(mails_log_id: ids).delete_all
+      deleted = Mails::Log.where(id: ids).delete_all
+      total_deleted += deleted
+      loop_count    += 1
+      logger.info "[#{loop_count}] deleted #{deleted} (total: #{total_deleted})"
+      sleep sleep_sec
+    end
+    logger.info "=== Done. Total deleted: #{total_deleted} ==="
+  end
+end
